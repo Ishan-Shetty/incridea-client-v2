@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
+// ...
+import { verifyMasterKey } from '../api/auth'
+import { useSocket } from '../hooks/useSocket'
 import {
   fetchAdminUsers,
   fetchSettings,
@@ -18,24 +21,14 @@ import {
   type WebLogsResponse,
 } from '../api/admin'
 import {
-  EVENT_TYPES,
-  addOrganizerToEvent,
-  createBranchRepEvent,
-  deleteBranchRepEvent,
-  fetchBranchRepEventDetails,
+  addOrganiserToEvent,
   fetchBranchRepEvents,
-  removeOrganizerFromEvent,
+  removeOrganiserFromEvent,
   searchBranchRepUsers,
-  toggleBranchRepEventPublish,
-  updateBranchRepEvent,
   type BranchRepEvent,
-  type BranchRepEventDetails,
   type BranchRepEventsResponse,
-  type BranchRepUser,
-  type CreateBranchRepEventPayload,
-  type EventType,
+  type BranchRepUser, // Restore this as it is used
 } from '../api/branchRep'
-import type { EventCategory, EventTier } from '../api/types'
 import apiClient from '../api/client'
 import { hasRole, normalizeRoles } from '../utils/roles'
 import { showToast } from '../utils/toast'
@@ -44,13 +37,35 @@ import LogsTab from './dashboard/LogsTab'
 import SettingsTab from './dashboard/SettingsTab'
 import UsersTab from './dashboard/UsersTab'
 import VariablesTab from './dashboard/VariablesTab'
+import DocEventsTab from './dashboard/DocEventsTab'
+import DocAssignRepTab from './dashboard/DocAssignRepTab'
+import OrganiserTab from './dashboard/OrganiserTab'
+import JudgingTab from './dashboard/JudgingTab'
+import {
+  fetchDocumentationEvents,
+  createDocumentationEvent,
+  updateDocumentationEvent,
+  fetchDocumentationEventDetails,
+  fetchBranches,
+  type DocumentationEvent,
+  type DocumentationEventDetails,
+  type CreateDocumentationEventPayload,
+  type UpdateDocumentationEventPayload,
+  type Branch,
+} from '../api/documentation'
 
 const ADMIN_TABS = ['Settings', 'Variables', 'Users', 'Logs'] as const
-const BRANCHREP_TABS = ['Branch Events'] as const
-const EVENT_CATEGORIES: EventCategory[] = ['TECHNICAL', 'NON_TECHNICAL', 'CORE', 'SPECIAL']
-const EVENT_TIERS: EventTier[] = ['DIAMOND', 'GOLD', 'SILVER', 'BRONZE']
+const BRANCHREP_TABS = ['Branch Rep'] as const
+const DOCUMENTATION_TABS = ['Doc Access', 'Assign Branch Rep'] as const
+const ORGANISER_TABS = ['Organiser'] as const
+const JUDGING_TABS = ['Judging'] as const
 
-type TabKey = (typeof ADMIN_TABS)[number] | (typeof BRANCHREP_TABS)[number]
+type TabKey =
+  | (typeof ADMIN_TABS)[number]
+  | (typeof BRANCHREP_TABS)[number]
+  | (typeof DOCUMENTATION_TABS)[number]
+  | (typeof ORGANISER_TABS)[number]
+  | (typeof JUDGING_TABS)[number]
 
 const truthyStrings = new Set(['true', '1', 'yes', 'y', 'on'])
 
@@ -73,22 +88,55 @@ function isTruthyVariable(value: unknown): boolean {
 function DashboardPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { eventId } = useParams<{ eventId: string }>()
 
   const [token, setToken] = useState<string | null>(() =>
     typeof window !== 'undefined' ? localStorage.getItem('token') : null,
   )
   const [roles, setRoles] = useState<string[]>([])
   const [isBranchRep, setIsBranchRep] = useState(false)
+  const [isDocumentation, setIsDocumentation] = useState(false)
+  const [isOrganiser, setIsOrganiser] = useState(false)
+  const [isJudge, setIsJudge] = useState(false)
+  const [userId, setUserId] = useState<number | null>(null)
   const isAdmin = hasRole(roles, 'ADMIN')
-
+  const { socket } = useSocket()
+  
   const [tabLoadState, setTabLoadState] = useState<Record<TabKey, boolean>>({
     Settings: true,
     Variables: false,
     Users: false,
     Logs: false,
-    'Branch Events': false,
+    'Branch Rep': false,
+    'Doc Access': false,
+    'Assign Branch Rep': false,
+    'Organiser': false,
+    'Judging': false,
   })
-  const [activeTab, setActiveTab] = useState<TabKey>('Settings')
+
+  // Initialize activeTab safely
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('dashboard_active_tab')
+      // Validate if stored tab is a valid TabKey
+      if (stored && [
+        ...ADMIN_TABS, 
+        ...BRANCHREP_TABS, 
+        ...DOCUMENTATION_TABS, 
+        ...ORGANISER_TABS, 
+        ...JUDGING_TABS
+      ].includes(stored as any)) {
+        return stored as TabKey
+      }
+    }
+    return 'Settings'
+  })
+
+  useEffect(() => {
+    if (eventId) {
+      setActiveTab('Organiser')
+    }
+  }, [eventId])
 
   const [variableDrafts, setVariableDrafts] = useState<Record<string, string>>({})
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -101,31 +149,36 @@ function DashboardPage() {
   const [editingUserId, setEditingUserId] = useState<number | null>(null)
   const [logsPage, setLogsPage] = useState(1)
 
-  const [isAddEventOpen, setIsAddEventOpen] = useState(false)
-  const [newEventName, setNewEventName] = useState('')
-  const [newEventDescription, setNewEventDescription] = useState('')
-  const [newEventVenue, setNewEventVenue] = useState('')
-  const [newEventFees, setNewEventFees] = useState(0)
-  const [newMinTeamSize, setNewMinTeamSize] = useState(1)
-  const [newMaxTeamSize, setNewMaxTeamSize] = useState(1)
-  const [newMaxTeams, setNewMaxTeams] = useState('')
-  const [newEventType, setNewEventType] = useState<EventType>(EVENT_TYPES[0])
-  const [newEventCategory, setNewEventCategory] = useState<EventCategory>('TECHNICAL')
-  const [newEventTier, setNewEventTier] = useState<EventTier>('GOLD')
+  // Branch Rep State
 
-  const [organizerSearchTerms, setOrganizerSearchTerms] = useState<Record<number, string>>({})
-  const [organizerSearchResults, setOrganizerSearchResults] = useState<Record<number, BranchRepUser[]>>({})
-  const [organizerSearchLoading, setOrganizerSearchLoading] = useState<Record<number, boolean>>({})
-  const [pendingOrganizer, setPendingOrganizer] = useState<{ eventId: number; user: BranchRepUser } | null>(null)
-  const [activeEventId, setActiveEventId] = useState<number | null>(null)
-  const [eventDrafts, setEventDrafts] = useState<Record<number, Partial<BranchRepEventDetails>>>({})
+  const [organiserSearchTerms, setOrganiserSearchTerms] = useState<Record<number, string>>({})
+  const [organiserSearchResults, setOrganiserSearchResults] = useState<Record<number, BranchRepUser[]>>({})
+  const [organiserSearchLoading, setOrganiserSearchLoading] = useState<Record<number, boolean>>({})
+  const [pendingOrganiser, setPendingOrganiser] = useState<{ eventId: number; user: BranchRepUser } | null>(null)
+
+  // Documentation Role State
+  const [activeDocEventId, setActiveDocEventId] = useState<number | null>(null)
+  const [docEventDrafts, setDocEventDrafts] = useState<Record<number, Partial<DocumentationEventDetails>>>({})
+  const [isDocAddEventOpen, setIsDocAddEventOpen] = useState(false)
+
+  // Master Key State
+  const [isMasterKeyOpen, setIsMasterKeyOpen] = useState(false)
+  const [masterKeyInput, setMasterKeyInput] = useState('')
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null)
+  const [verifyingMasterKey, setVerifyingMasterKey] = useState(false)
 
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab)
-    setTabLoadState((prev) => ({ ...prev, [tab]: true }))
   }
 
   useEffect(() => {
+    localStorage.setItem('dashboard_active_tab', activeTab)
+    setTabLoadState((prev) => ({ ...prev, [activeTab]: true }))
+  }, [activeTab])
+
+  // ...
+
+  const fetchRoles = useCallback(async () => {
     const authToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     setToken(authToken)
 
@@ -134,19 +187,28 @@ function DashboardPage() {
       return
     }
 
-    const fetchRoles = async () => {
-      try {
-        const { data } = await apiClient.get<{
-          user?: { roles?: unknown; isBranchRep?: unknown; isOrganizer?: unknown }
-        }>('/auth/me', {
-          headers: { Authorization: `Bearer ${authToken}` },
-        })
-        const fetchedRoles = data?.user ? normalizeRoles(data.user.roles) : []
-        const branchRepFlag = Boolean(data?.user && (data.user as { isBranchRep?: unknown }).isBranchRep)
-        setRoles(fetchedRoles)
-        setIsBranchRep(branchRepFlag)
+    try {
+      const { data } = await apiClient.get<{
+        user?: { id: number; roles?: unknown; isBranchRep?: unknown; isOrganiser?: unknown; isJudge?: unknown }
+      }>('/auth/me', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      const fetchedRoles = data?.user ? normalizeRoles(data.user.roles) : []
+      const branchRepFlag = Boolean(data?.user && (data.user as { isBranchRep?: unknown }).isBranchRep)
+      const organiserFlag = Boolean(data?.user && (data.user as { isOrganiser?: unknown }).isOrganiser)
+      const judgeFlag = Boolean(data?.user && (data.user as { isJudge?: unknown }).isJudge)
+      const documentationFlag = hasRole(fetchedRoles, 'DOCUMENTATION')
 
-        const hasAnyAccess = hasRole(fetchedRoles, 'ADMIN') || branchRepFlag
+      if (data?.user?.id) setUserId(data.user.id)
+      setRoles(fetchedRoles)
+      setIsBranchRep(branchRepFlag)
+      setIsOrganiser(organiserFlag)
+      setIsJudge(judgeFlag)
+      setIsDocumentation(documentationFlag)
+
+      // ... (Rest of logic)
+      
+      const hasAnyAccess = hasRole(fetchedRoles, 'ADMIN') || branchRepFlag || documentationFlag || organiserFlag || judgeFlag
         if (!hasAnyAccess) {
           showToast('Access required.', 'error')
           void navigate('/')
@@ -156,18 +218,41 @@ function DashboardPage() {
         const availableTabs: TabKey[] = [
           ...(hasRole(fetchedRoles, 'ADMIN') ? [...ADMIN_TABS] : []),
           ...(branchRepFlag ? [...BRANCHREP_TABS] : []),
+          ...(documentationFlag ? [...DOCUMENTATION_TABS] : []),
+          ...(organiserFlag ? [...ORGANISER_TABS] : []),
+          ...(judgeFlag ? [...JUDGING_TABS] : []),
         ]
-
+        
         setActiveTab((prev) => (availableTabs.includes(prev) ? prev : availableTabs[0]))
-        setTabLoadState((prev) => ({ ...prev, [availableTabs[0]]: true }))
-      } catch {
-        showToast('Session expired. Please log in again.', 'error')
-        void navigate('/login')
-      }
+
+    } catch {
+      showToast('Session expired. Please log in again.', 'error')
+      void navigate('/login')
+    }
+  }, [navigate])
+
+  useEffect(() => {
+    void fetchRoles()
+  }, [fetchRoles])
+
+  useEffect(() => {
+    if (!userId || !socket) return
+
+    const room = `user-${userId}`
+    socket.emit('join-room', room)
+
+    const handleRoleUpdate = () => {
+        showToast('Your roles have been updated', 'info')
+        void fetchRoles()
     }
 
-    void fetchRoles()
-  }, [navigate])
+    socket.on('ROLE_UPDATED', handleRoleUpdate)
+
+    return () => {
+        socket.emit('leave-room', room)
+        socket.off('ROLE_UPDATED', handleRoleUpdate)
+    }
+  }, [userId, socket, fetchRoles])
 
   useEffect(() => {
     const handle = window.setTimeout(() => setUserSearchTerm(userSearchDraft.trim()), 250)
@@ -207,7 +292,7 @@ function DashboardPage() {
   const branchEventsQuery = useQuery<BranchRepEventsResponse, Error, BranchRepEventsResponse, ['branch-rep-events']>({
     queryKey: ['branch-rep-events'],
     queryFn: () => fetchBranchRepEvents(token ?? ''),
-    enabled: isBranchRep && Boolean(token) && tabLoadState['Branch Events'],
+    enabled: isBranchRep && Boolean(token) && tabLoadState['Branch Rep'],
   })
 
   useEffect(() => {
@@ -278,231 +363,167 @@ function DashboardPage() {
     },
   })
 
-  const createBranchEventMutation = useMutation({
-    mutationFn: (payload: CreateBranchRepEventPayload) => {
-      if (!token) {
-        throw new Error('Unauthorized')
-      }
-      return createBranchRepEvent(payload, token)
-    },
-    onSuccess: () => {
-      void branchEventsQuery.refetch()
-      resetAddEventForm()
-      setIsAddEventOpen(false)
-      showToast('Event created', 'success')
-    },
-    onError: (error) => {
-      showToast(error instanceof Error ? error.message : 'Failed to create event', 'error')
-    },
-  })
 
-  const addOrganizerMutation = useMutation<{ organizer: { userId: number } }, Error, { eventId: number; email: string }>({
+  const addOrganiserMutation = useMutation<{ organiser: { userId: number } }, Error, { eventId: number; email: string }>({
     mutationFn: (payload) => {
       if (!token) {
         throw new Error('Unauthorized')
       }
-      return addOrganizerToEvent(payload.eventId, payload.email, token)
+      return addOrganiserToEvent(payload.eventId, payload.email, token)
     },
     onSuccess: (_data, variables) => {
-      setOrganizerSearchTerms((prev) => ({ ...prev, [variables.eventId]: '' }))
-      setOrganizerSearchResults((prev) => ({ ...prev, [variables.eventId]: [] }))
-      setPendingOrganizer(null)
+      setOrganiserSearchTerms((prev) => ({ ...prev, [variables.eventId]: '' }))
+      setOrganiserSearchResults((prev) => ({ ...prev, [variables.eventId]: [] }))
+      setPendingOrganiser(null)
       void branchEventsQuery.refetch()
-      showToast('Organizer added', 'success')
+      showToast('Organiser added', 'success')
     },
     onError: (error) => {
-      showToast(error instanceof Error ? error.message : 'Failed to add organizer', 'error')
+      showToast(error instanceof Error ? error.message : 'Failed to add organiser', 'error')
     },
   })
 
-  const removeOrganizerMutation = useMutation({
+  const removeOrganiserMutation = useMutation({
     mutationFn: (payload: { eventId: number; userId: number }) => {
       if (!token) {
         throw new Error('Unauthorized')
       }
-      return removeOrganizerFromEvent(payload.eventId, payload.userId, token)
+      return removeOrganiserFromEvent(payload.eventId, payload.userId, token)
     },
     onSuccess: () => {
       void branchEventsQuery.refetch()
-      showToast('Organizer removed', 'success')
+      showToast('Organiser removed', 'success')
     },
     onError: (error) => {
-      showToast(error instanceof Error ? error.message : 'Failed to remove organizer', 'error')
+      showToast(error instanceof Error ? error.message : 'Failed to remove organiser', 'error')
     },
   })
 
-  const deleteBranchEventMutation = useMutation({
-    mutationFn: (eventId: number) => {
-      if (!token) {
-        throw new Error('Unauthorized')
-      }
-      return deleteBranchRepEvent(eventId, token)
-    },
-    onSuccess: () => {
-      void branchEventsQuery.refetch()
-      void eventDetailsQuery.refetch()
-      showToast('Event deleted', 'success')
-    },
-    onError: (error) => {
-      showToast(error instanceof Error ? error.message : 'Failed to delete event', 'error')
-    },
-  })
 
-  const eventDetailsQuery = useQuery<
-    BranchRepEventDetails,
-    Error,
-    BranchRepEventDetails,
-    ['branch-rep-event', number | null]
-  >({
-    queryKey: ['branch-rep-event', activeEventId],
-    queryFn: async () => {
-      if (!token || !activeEventId) {
-        throw new Error('No event selected')
-      }
-      const { event } = await fetchBranchRepEventDetails(activeEventId, token)
-      return event
-    },
-    enabled: tabLoadState['Branch Events'] && Boolean(token && activeEventId && isBranchRep),
-    staleTime: 30_000,
-  })
 
-  useEffect(() => {
-    const event = eventDetailsQuery.data
-    if (!event) {
-      return
-    }
-    setEventDrafts((prev) => ({
-      ...prev,
-      [event.id]: {
-        name: event.name,
-        description: event.description,
-        venue: event.venue,
-        fees: event.fees,
-        minTeamSize: event.minTeamSize,
-        maxTeamSize: event.maxTeamSize,
-        maxTeams: event.maxTeams,
-        eventType: event.eventType,
-        category: event.category,
-        tier: event.tier,
-      },
-    }))
-  }, [eventDetailsQuery.data])
 
-  const handleOrganizerSearch = async (eventId: number, term: string) => {
-    setOrganizerSearchTerms((prev) => ({ ...prev, [eventId]: term }))
+  const handleOrganiserSearch = async (eventId: number, term: string) => {
+    setOrganiserSearchTerms((prev) => ({ ...prev, [eventId]: term }))
     if (!token) {
       return
     }
     if (term.trim().length < 2) {
-      setOrganizerSearchResults((prev) => ({ ...prev, [eventId]: [] }))
+      setOrganiserSearchResults((prev) => ({ ...prev, [eventId]: [] }))
       return
     }
-    setOrganizerSearchLoading((prev) => ({ ...prev, [eventId]: true }))
+    setOrganiserSearchLoading((prev) => ({ ...prev, [eventId]: true }))
     try {
       const { users } = await searchBranchRepUsers(term.trim(), token)
-      setOrganizerSearchResults((prev) => ({ ...prev, [eventId]: users }))
+      setOrganiserSearchResults((prev) => ({ ...prev, [eventId]: users }))
     } catch (error) {
       console.error(error)
     } finally {
-      setOrganizerSearchLoading((prev) => ({ ...prev, [eventId]: false }))
+      setOrganiserSearchLoading((prev) => ({ ...prev, [eventId]: false }))
     }
   }
 
-  const updateBranchEventMutation = useMutation<
-    { event: BranchRepEventDetails },
-    Error,
-    { eventId: number; data: Partial<BranchRepEventDetails> }
-  >({
-    mutationFn: (payload) => {
-      if (!token) {
-        throw new Error('Unauthorized')
-      }
-      const { eventId, data } = payload
-      return updateBranchRepEvent(eventId, data, token)
-    },
-    onSuccess: ({ event }) => {
-      void branchEventsQuery.refetch()
-      void eventDetailsQuery.refetch()
-      setEventDrafts((prev) => ({ ...prev, [event.id]: event }))
-      showToast('Event updated', 'success')
-    },
-    onError: (error) => {
-      showToast(error instanceof Error ? error.message : 'Failed to update event', 'error')
-    },
+
+
+  // Documentation Queries & Mutations
+  const docEventsQuery = useQuery<{ events: DocumentationEvent[] }, Error, { events: DocumentationEvent[] }, ['documentation-events']>({
+    queryKey: ['documentation-events'],
+    queryFn: () => fetchDocumentationEvents(token ?? ''),
+    enabled: isDocumentation && Boolean(token) && tabLoadState['Doc Access'],
   })
 
-  const togglePublishMutation = useMutation({
-    mutationFn: (payload: { eventId: number; publish: boolean }) => {
-      if (!token) {
-        throw new Error('Unauthorized')
-      }
-      return toggleBranchRepEventPublish(payload.eventId, payload.publish, token)
+  const branchesQuery = useQuery<{ branches: Branch[] }, Error, { branches: Branch[] }, ['branches']>({
+    queryKey: ['branches'],
+    queryFn: () => fetchBranches(token ?? ''),
+    enabled: isDocumentation && Boolean(token) && tabLoadState['Doc Access'],
+  })
+
+  const docEventDetailsQuery = useQuery<DocumentationEventDetails, Error, DocumentationEventDetails, ['doc-event', number | null]>({
+    queryKey: ['doc-event', activeDocEventId],
+    queryFn: async () => {
+      if (!token || !activeDocEventId) throw new Error('No event selected')
+      const { event } = await fetchDocumentationEventDetails(activeDocEventId, token)
+      return event
+    },
+    enabled: tabLoadState['Doc Access'] && Boolean(token && activeDocEventId && isDocumentation),
+  })
+
+  useEffect(() => {
+    const event = docEventDetailsQuery.data
+    if (!event) return
+    setDocEventDrafts((prev) => ({
+      ...prev,
+      [event.id]: {
+        ...event, // Copy all fields
+      },
+    }))
+  }, [docEventDetailsQuery.data])
+
+  const createDocEventMutation = useMutation({
+    mutationFn: (payload: CreateDocumentationEventPayload) => {
+      if (!token) throw new Error('Unauthorized')
+      return createDocumentationEvent(payload, token)
     },
     onSuccess: () => {
-      void branchEventsQuery.refetch()
-      void eventDetailsQuery.refetch()
-      showToast('Publish state updated', 'success')
+      void docEventsQuery.refetch()
+      showToast('Event created', 'success')
     },
-    onError: (error) => {
-      showToast(error instanceof Error ? error.message : 'Failed to update publish state', 'error')
-    },
+    onError: (error) => showToast(error instanceof Error ? error.message : 'Failed to create event', 'error'),
   })
 
-  const setActiveEventDraft = (eventId: number, data: Partial<BranchRepEventDetails>) => {
-    setEventDrafts((prev) => ({ ...prev, [eventId]: { ...prev[eventId], ...data } }))
+  const updateDocEventMutation = useMutation({
+    mutationFn: (payload: { eventId: number; data: UpdateDocumentationEventPayload }) => {
+      if (!token) throw new Error('Unauthorized')
+      return updateDocumentationEvent(payload.eventId, payload.data, token)
+    },
+    onSuccess: ({ event }) => {
+      void docEventsQuery.refetch()
+      void docEventDetailsQuery.refetch()
+      setDocEventDrafts((prev) => ({ ...prev, [event.id]: event }))
+      showToast('Event updated', 'success')
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : 'Failed to update event', 'error'),
+  })
+
+  const setActiveDocEventDraft = (eventId: number, data: Partial<DocumentationEventDetails>) => {
+    setDocEventDrafts((prev) => ({ ...prev, [eventId]: { ...prev[eventId], ...data } }))
   }
 
-  const resetAddEventForm = () => {
-    setNewEventName('')
-    setNewEventDescription('')
-    setNewEventVenue('')
-    setNewEventFees(0)
-    setNewMinTeamSize(1)
-    setNewMaxTeamSize(1)
-    setNewMaxTeams('')
-    setNewEventType(EVENT_TYPES[0])
-    setNewEventCategory('TECHNICAL')
-    setNewEventTier('GOLD')
+
+
+  const handleMasterKeySubmit = async () => {
+    if (!token) return
+    setVerifyingMasterKey(true)
+    try {
+      const { success, message } = await verifyMasterKey(masterKeyInput, token)
+      if (success) {
+        pendingAction?.()
+        setIsMasterKeyOpen(false)
+        setMasterKeyInput('')
+        setPendingAction(null)
+      } else {
+        showToast(message || 'Invalid Master Key', 'error')
+      }
+    } catch (error) {
+      showToast('Failed to verify Master Key', 'error')
+    } finally {
+      setVerifyingMasterKey(false)
+    }
   }
 
-  const handleCreateEvent = () => {
-    const trimmedName = newEventName.trim()
-    if (!trimmedName) {
-      showToast('Event name is required', 'error')
-      return
-    }
-    if (newEventFees < 0) {
-      showToast('Fees cannot be negative', 'error')
-      return
-    }
-    if (newMinTeamSize <= 0 || newMaxTeamSize <= 0) {
-      showToast('Team size must be at least 1', 'error')
-      return
-    }
-    if (newMaxTeamSize < newMinTeamSize) {
-      showToast('Max team size cannot be less than min team size', 'error')
-      return
-    }
-    const parsedMaxTeams = newMaxTeams.trim() === '' ? null : Number(newMaxTeams)
-    if (parsedMaxTeams !== null && (!Number.isFinite(parsedMaxTeams) || parsedMaxTeams <= 0)) {
-      showToast('Max teams must be a positive number', 'error')
-      return
-    }
+  const interceptedUpdateSettingMutation = {
+    ...updateSettingMutation,
+    mutate: (payload: { key: string; value: boolean }) => {
+      setPendingAction(() => () => updateSettingMutation.mutate(payload))
+      setIsMasterKeyOpen(true)
+    },
+  }
 
-    const payload: CreateBranchRepEventPayload = {
-      name: trimmedName,
-      description: newEventDescription.trim() || undefined,
-      venue: newEventVenue.trim() || undefined,
-      fees: newEventFees,
-      minTeamSize: newMinTeamSize,
-      maxTeamSize: newMaxTeamSize,
-      maxTeams: parsedMaxTeams,
-      eventType: newEventType,
-      category: newEventCategory,
-      tier: newEventTier,
-    }
-
-    createBranchEventMutation.mutate(payload)
+  const interceptedUpsertVariableMutation = {
+    ...upsertVariableMutation,
+    mutate: (payload: { key: string; value: string }) => {
+      setPendingAction(() => () => upsertVariableMutation.mutate(payload))
+      setIsMasterKeyOpen(true)
+    },
   }
 
   const settings = useMemo<Setting[]>(() => settingsQuery.data?.settings ?? [], [settingsQuery.data])
@@ -527,11 +548,11 @@ function DashboardPage() {
     return null
   }
 
-  const hasAnyAccess = isAdmin || isBranchRep
+  const hasAnyAccess = isAdmin || isBranchRep || isDocumentation || isOrganiser || isJudge
   if (!hasAnyAccess) {
     return (
-      <section className="min-h-screen space-y-4 bg-black px-2 pb-8 pt-4 text-slate-100 lg:px-3">
-        <div className="card p-6 border border-slate-800 bg-black">
+      <section className="min-h-screen space-y-4  px-2 pb-8 pt-4 text-slate-100 lg:px-3">
+        <div className="card p-6 border border-slate-800 ">
           <h1 className="text-2xl font-semibold text-slate-50">Dashboard</h1>
           <p className="text-sm text-slate-400">You do not have access to dashboard tools.</p>
         </div>
@@ -540,258 +561,119 @@ function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen w-full max-w-full space-y-3 bg-black px-2 pb-8 pt-4 text-slate-100 lg:px-3">
-      {isAddEventOpen ? (
+    <div className="min-h-screen w-full max-w-full space-y-3  px-2 pb-8 pt-4 text-slate-100 lg:px-3">
+
+      {isMasterKeyOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div
-            className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
-            onClick={() => setIsAddEventOpen(false)}
-            aria-label="Close add event modal"
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={() => setIsMasterKeyOpen(false)}
           />
-          <div className="relative z-10 w-full max-w-xl rounded-2xl border border-slate-800 bg-black p-6 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-400">New Event</p>
-                <h3 className="text-lg font-semibold text-slate-50">Add Event</h3>
-              </div>
+          <div className="relative z-10 w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+            <h3 className="mb-4 text-center text-lg font-semibold text-slate-100">Authentication Required</h3>
+            <p className="mb-4 text-center text-sm text-slate-400">Enter the Master Key to proceed.</p>
+            <input
+              type="password"
+              className="input mb-4 text-center tracking-widest"
+              autoFocus
+              value={masterKeyInput}
+              onChange={(e) => setMasterKeyInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleMasterKeySubmit()
+              }}
+              placeholder="••••"
+            />
+            <div className="flex justify-end gap-2">
               <button
-                type="button"
-                className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
-                onClick={() => setIsAddEventOpen(false)}
+                className="rounded-lg px-3 py-2 text-sm text-slate-400 hover:text-slate-200"
+                onClick={() => setIsMasterKeyOpen(false)}
               >
-                Close
+                Cancel
               </button>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Event Name</label>
-                  <input
-                    className="input"
-                    placeholder="Enter event name"
-                    value={newEventName}
-                    onChange={(event) => setNewEventName(event.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Event Type</label>
-                  <select
-                    className="input"
-                    value={newEventType}
-                    onChange={(event) => setNewEventType(event.target.value as EventType)}
-                  >
-                    {EVENT_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-wide text-slate-400">Description</label>
-                <textarea
-                  className="input min-h-30"
-                  placeholder="Add a short overview"
-                  value={newEventDescription}
-                  onChange={(event) => setNewEventDescription(event.target.value)}
-                />
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Venue</label>
-                  <input
-                    className="input"
-                    placeholder="Hall / Room / Location"
-                    value={newEventVenue}
-                    onChange={(event) => setNewEventVenue(event.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Fees</label>
-                  <input
-                    type="number"
-                    className="input"
-                    min={0}
-                    value={newEventFees}
-                    onChange={(event) => setNewEventFees(Number(event.target.value))}
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Min Team Size</label>
-                  <input
-                    type="number"
-                    className="input"
-                    min={1}
-                    value={newMinTeamSize}
-                    onChange={(event) => setNewMinTeamSize(Number(event.target.value))}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Max Team Size</label>
-                  <input
-                    type="number"
-                    className="input"
-                    min={1}
-                    value={newMaxTeamSize}
-                    onChange={(event) => setNewMaxTeamSize(Number(event.target.value))}
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Max Teams (optional)</label>
-                  <input
-                    type="number"
-                    className="input"
-                    min={1}
-                    value={newMaxTeams}
-                    onChange={(event) => setNewMaxTeams(event.target.value)}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Category</label>
-                  <select
-                    className="input"
-                    value={newEventCategory}
-                    onChange={(event) => setNewEventCategory(event.target.value as EventCategory)}
-                  >
-                    {EVENT_CATEGORIES.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-xs uppercase tracking-wide text-slate-400">Tier</label>
-                  <select
-                    className="input"
-                    value={newEventTier}
-                    onChange={(event) => setNewEventTier(event.target.value as EventTier)}
-                  >
-                    {EVENT_TIERS.map((tier) => (
-                      <option key={tier} value={tier}>
-                        {tier}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  className="button"
-                  onClick={handleCreateEvent}
-                  disabled={createBranchEventMutation.isPending}
-                >
-                  {createBranchEventMutation.isPending ? 'Creating…' : 'Create Event'}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:bg-slate-800"
-                  onClick={() => {
-                    resetAddEventForm()
-                    setIsAddEventOpen(false)
-                  }}
-                  disabled={createBranchEventMutation.isPending}
-                >
-                  Cancel
-                </button>
-              </div>
+              <button
+                className="button bg-indigo-600 hover:bg-indigo-500"
+                onClick={() => void handleMasterKeySubmit()}
+                disabled={verifyingMasterKey || !masterKeyInput}
+              >
+                {verifyingMasterKey ? 'Verifying...' : 'Unlock'}
+              </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      <div className="card space-y-3 border border-slate-800 bg-black p-5">
+      <div className="card space-y-3 border border-slate-800  p-5">
         <div className="flex items-center justify-center text-center">
           <div>
             <p className="muted">Dashboard</p>
             <h1 className="text-3xl font-semibold text-slate-50">
-              {isAdmin ? 'Admin Dashboard' : isBranchRep ? 'Branch Rep Dashboard' : 'Dashboard'}
+              {isAdmin ? 'Admin Dashboard' : isBranchRep ? 'Branch Rep Dashboard' : isDocumentation ? 'Documentation Dashboard' : isOrganiser ? 'Organiser Dashboard' : 'Dashboard'}
             </h1>
           </div>
         </div>
 
         {isAdmin ? (
           <div className="grid gap-3 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-800 bg-black p-3">
+            <div className="rounded-xl border border-slate-800  p-3">
               <p className="mb-2 text-xs font-semibold text-slate-100">Statuses</p>
-                {[{ label: 'Registrations', key: 'isRegistrationOpen' }, { label: 'Spot Registration', key: 'isSpotRegistration' }, { label: 'Committee Registration', key: 'isCommitteeRegOpen' }].map((item) => {
-                  const rawValue = variableLookup[item.key] ?? settingsLookup[item.key]
-                  const value = isTruthyVariable(rawValue)
-                  return (
-                    <li key={item.key} className="flex items-center justify-between bg-black px-3 py-2">
-                      <span className="text-xs text-slate-200">{item.label}</span>
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${
-                        value
-                          ? 'border border-emerald-400/70 bg-emerald-500/10 text-emerald-100'
-                          : 'border border-rose-400/70 bg-rose-500/10 text-rose-100'
+              {[{ label: 'Registrations', key: 'isRegistrationOpen' }, { label: 'Spot Registration', key: 'isSpotRegistration' }, { label: 'Committee Registration', key: 'isCommitteeRegOpen' }].map((item) => {
+                const rawValue = variableLookup[item.key] ?? settingsLookup[item.key]
+                const value = isTruthyVariable(rawValue)
+                return (
+                  <li key={item.key} className="flex items-center justify-between  px-3 py-2">
+                    <span className="text-xs text-slate-200">{item.label}</span>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${value
+                      ? 'border border-emerald-400/70 bg-emerald-500/10 text-emerald-100'
+                      : 'border border-rose-400/70 bg-rose-500/10 text-rose-100'
                       }`}>
-                        <span className={`h-2 w-2 rounded-full ${value ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                        {value ? 'Open' : 'Closed'}
-                      </span>
-                    </li>
-                  )
-                })}
+                      <span className={`h-2 w-2 rounded-full ${value ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                      {value ? 'Open' : 'Closed'}
+                    </span>
+                  </li>
+                )
+              })}
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-black p-3">
+            <div className="rounded-xl border border-slate-800  p-3">
               <p className="mb-2 text-xs font-semibold text-slate-100">Fees</p>
-                {[
-                  {
-                    label: 'Alumni Registration Fee',
-                    key: 'alumniRegistrationFee',
-                  },
-                  {
-                    label: 'External Students Fee',
-                    key: 'externalRegistrationFee',
-                  },
-                  {
-                    label: 'External Students OnSpot Fee',
-                    key: 'externalRegistrationFeeOnSpot',
-                  },
-                  {
-                    label: 'Internal Students Fee',
-                    key: 'internalRegistrationFeeGen',
-                  },
-                  {
-                    label: 'Internal Students Merch Inclusive',
-                    key: 'internalRegistrationFeeInclusiveMerch',
-                  },
-                  {
-                    label: 'Internal Students OnSpot',
-                    key: 'internalRegistrationOnSpot',
-                  },
-                ].map((item) => (
-                  <li key={item.key} className="flex items-center justify-between bg-black px-3 py-2">
-                    <span className="text-xs text-slate-200">{item.label}</span>
-                    <span className="text-xs font-semibold text-slate-100">{variableLookup[item.key] ?? (settingsLookup[item.key] ?? '—')}</span>
-                  </li>
-                ))}
+              {[
+                {
+                  label: 'Alumni Registration Fee',
+                  key: 'alumniRegistrationFee',
+                },
+                {
+                  label: 'External Students Fee',
+                  key: 'externalRegistrationFee',
+                },
+                {
+                  label: 'External Students OnSpot Fee',
+                  key: 'externalRegistrationFeeOnSpot',
+                },
+                {
+                  label: 'Internal Students Fee',
+                  key: 'internalRegistrationFeeGen',
+                },
+                {
+                  label: 'Internal Students Merch Inclusive',
+                  key: 'internalRegistrationFeeInclusiveMerch',
+                },
+                {
+                  label: 'Internal Students OnSpot',
+                  key: 'internalRegistrationOnSpot',
+                },
+              ].map((item) => (
+                <li key={item.key} className="flex items-center justify-between  px-3 py-2">
+                  <span className="text-xs text-slate-200">{item.label}</span>
+                  <span className="text-xs font-semibold text-slate-100">{variableLookup[item.key] ?? (settingsLookup[item.key] ?? '—')}</span>
+                </li>
+              ))}
             </div>
           </div>
         ) : null}
       </div>
 
       <section className="grid w-full gap-3 lg:grid-cols-[220px_1fr]">
-        <aside className="card h-full border border-slate-800 bg-black p-3 sm:p-4">
+        <aside className="card h-full border border-slate-800  p-3 sm:p-4">
           <div className="flex h-full flex-col gap-5">
             {isAdmin ? (
               <div className="flex flex-col gap-2">
@@ -801,9 +683,8 @@ function DashboardPage() {
                     key={tab}
                     type="button"
                     onClick={() => handleTabChange(tab)}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${
-                      activeTab === tab ? 'bg-sky-500/20 text-sky-200' : 'hover:bg-slate-800 text-slate-200'
-                    }`}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${activeTab === tab ? 'bg-sky-500/20 text-sky-200' : 'hover:bg-slate-800 text-slate-200'
+                      }`}
                   >
                     {tab}
                   </button>
@@ -819,9 +700,42 @@ function DashboardPage() {
                     key={tab}
                     type="button"
                     onClick={() => handleTabChange(tab)}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${
-                      activeTab === tab ? 'bg-emerald-500/20 text-emerald-200' : 'hover:bg-slate-800 text-slate-200'
-                    }`}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${activeTab === tab ? 'bg-emerald-500/20 text-emerald-200' : 'hover:bg-slate-800 text-slate-200'
+                      }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {isDocumentation ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Documentation</p>
+                {DOCUMENTATION_TABS.map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => handleTabChange(tab)}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${activeTab === tab ? 'bg-purple-500/20 text-purple-200' : 'hover:bg-slate-800 text-slate-200'
+                      }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {isOrganiser ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Organiser</p>
+                {ORGANISER_TABS.map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => handleTabChange(tab)}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${activeTab === tab ? 'bg-blue-500/20 text-blue-200' : 'hover:bg-slate-800 text-slate-200'
+                      }`}
                   >
                     {tab}
                   </button>
@@ -831,73 +745,111 @@ function DashboardPage() {
           </div>
         </aside>
 
-        <div className="card space-y-4 p-6 bg-black">
-          {activeTab === 'Settings' ? (
-            <SettingsTab settingsQuery={settingsQuery} settings={settings} updateSettingMutation={updateSettingMutation} />
-          ) : null}
-
-          {activeTab === 'Variables' ? (
-            <VariablesTab
-              variablesQuery={variablesQuery}
-              variables={variables}
-              editingKey={editingKey}
-              setEditingKey={setEditingKey}
-              variableDrafts={variableDrafts}
-              setVariableDrafts={setVariableDrafts}
-              upsertVariableMutation={upsertVariableMutation}
+        <main className="card min-h-[500px] border border-slate-800  p-4 sm:p-6">
+          {activeTab === 'Settings' && isAdmin ? (
+            <SettingsTab
+              settings={settings}
+              settingsQuery={settingsQuery}
+              updateSettingMutation={interceptedUpdateSettingMutation as any}
             />
           ) : null}
 
-          {activeTab === 'Users' ? (
+          {activeTab === 'Variables' && isAdmin ? (
+            <VariablesTab
+              variableDrafts={variableDrafts}
+              setVariableDrafts={setVariableDrafts}
+              editingKey={editingKey}
+              setEditingKey={setEditingKey}
+              upsertVariableMutation={interceptedUpsertVariableMutation as any}
+              variables={variables}
+              variablesQuery={variablesQuery}
+            />
+          ) : null}
+
+          {activeTab === 'Users' && isAdmin ? (
             <UsersTab
-              adminUsersQuery={adminUsersQuery}
-              adminAccessUsersQuery={adminAccessUsersQuery}
-              availableRoles={adminUsersData.availableRoles ?? ['USER', 'PARTICIPANT', 'ADMIN', 'JUDGE', 'JURY']}
-              users={adminUsers}
-              accessUsers={accessUsers}
               userSearchDraft={userSearchDraft}
               setUserSearchDraft={setUserSearchDraft}
               setUserSearchTerm={setUserSearchTerm}
-              userRolesDraft={userRolesDraft}
-              setUserRolesDraft={setUserRolesDraft}
+              users={adminUsers}
+              availableRoles={adminUsersData.availableRoles}
+              accessUsers={accessUsers}
+              adminUsersQuery={adminUsersQuery}
+              adminAccessUsersQuery={adminAccessUsersQuery}
+              updateUserRolesMutation={updateUserRolesMutation}
               selectedUser={selectedUser}
               setSelectedUser={setSelectedUser}
+              userRolesDraft={userRolesDraft}
+              setUserRolesDraft={setUserRolesDraft}
               editingUserId={editingUserId}
               setEditingUserId={setEditingUserId}
-              updateUserRolesMutation={updateUserRolesMutation}
             />
           ) : null}
 
-          {activeTab === 'Logs' ? (
-            <LogsTab webLogsQuery={webLogsQuery} logsPage={logsPage} setLogsPage={setLogsPage} />
-          ) : null}
-
-          {activeTab === 'Branch Events' ? (
-            <BranchEventsTab
-              branchName={branchName ?? undefined}
-              branchEvents={branchEvents}
-              branchEventsLoading={branchEventsQuery.isLoading}
-              branchEventsError={branchEventsQuery.isError ? (branchEventsQuery.error instanceof Error ? branchEventsQuery.error.message : 'Failed to load branch events.') : undefined}
-              activeEventId={activeEventId}
-              setActiveEventId={setActiveEventId}
-              organizerSearchTerms={organizerSearchTerms}
-              organizerSearchResults={organizerSearchResults}
-              organizerSearchLoading={organizerSearchLoading}
-              handleOrganizerSearch={handleOrganizerSearch}
-              pendingOrganizer={pendingOrganizer}
-              setPendingOrganizer={setPendingOrganizer}
-              eventDetailsQuery={eventDetailsQuery}
-              eventDrafts={eventDrafts}
-              setActiveEventDraft={setActiveEventDraft}
-              addOrganizerMutation={addOrganizerMutation}
-              removeOrganizerMutation={removeOrganizerMutation}
-              updateBranchEventMutation={updateBranchEventMutation}
-              togglePublishMutation={togglePublishMutation}
-              deleteBranchEventMutation={deleteBranchEventMutation}
-              setIsAddEventOpen={setIsAddEventOpen}
+          {activeTab === 'Logs' && isAdmin ? (
+            <LogsTab
+              webLogsQuery={webLogsQuery}
+              logsPage={logsPage}
+              setLogsPage={setLogsPage}
             />
           ) : null}
-        </div>
+          {activeTab === 'Branch Rep' && isBranchRep ? (
+            <div className="space-y-4">
+               {/* Sub-tab Navigation */}
+               <div className="border-b border-slate-800 flex gap-4">
+                  <button className="px-4 py-2 border-b-2 border-emerald-500 text-emerald-400 font-medium text-sm">
+                      Branch Rep Access
+                  </button>
+               </div>
+
+               <BranchEventsTab
+                  branchName={branchName ?? undefined}
+                  branchEvents={branchEvents}
+                  branchEventsLoading={branchEventsQuery.isLoading}
+                  branchEventsError={branchEventsQuery.error?.message}
+                  organiserSearchTerms={organiserSearchTerms}
+                  organiserSearchResults={organiserSearchResults}
+                  organiserSearchLoading={organiserSearchLoading}
+                  handleOrganiserSearch={handleOrganiserSearch}
+                  pendingOrganiser={pendingOrganiser}
+                  setPendingOrganiser={setPendingOrganiser}
+                  addOrganiserMutation={addOrganiserMutation}
+                  removeOrganiserMutation={removeOrganiserMutation}
+                />
+            </div>
+          ) : null}
+
+          {activeTab === 'Doc Access' && isDocumentation ? (
+            <DocEventsTab
+              events={docEventsQuery.data?.events ?? []}
+              eventsLoading={docEventsQuery.isLoading}
+              eventsError={docEventsQuery.error?.message}
+              branches={branchesQuery.data?.branches ?? []}
+              activeEventId={activeDocEventId}
+              setActiveEventId={setActiveDocEventId}
+              eventDetailsQuery={docEventDetailsQuery}
+              eventDrafts={docEventDrafts}
+              setActiveEventDraft={setActiveDocEventDraft}
+              createEventMutation={createDocEventMutation}
+              updateEventMutation={updateDocEventMutation}
+              setIsAddEventOpen={setIsDocAddEventOpen}
+              isAddEventOpen={isDocAddEventOpen}
+            />
+          ) : null}
+
+          {activeTab === 'Assign Branch Rep' && isDocumentation ? (
+              <DocAssignRepTab />
+          ) : null}
+
+          {activeTab === 'Organiser' && isOrganiser && token ? (
+             <OrganiserTab token={token} activeEventId={eventId ? Number(eventId) : undefined} />
+          ) : null}
+
+          {activeTab === 'Judging' && isJudge ? (
+            <JudgingTab />
+          ) : null}
+
+        </main>
       </section>
     </div>
   )

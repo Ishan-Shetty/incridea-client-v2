@@ -28,7 +28,8 @@ export interface UserPayload {
   isVerified: boolean
   phoneNumber: string
   isBranchRep?: boolean
-  isOrganizer?: boolean
+  isOrganiser?: boolean
+  isJudge?: boolean
   yearOfGraduation?: number | null
   alumniIdDocument?: string | null
 }
@@ -125,6 +126,21 @@ export async function requestPasswordReset(
 export async function resetPasswordConfirm(
   payload: ResetPasswordConfirmPayload,
 ): Promise<ResetPasswordResponse> {
-  const { data } = await apiClient.post<ResetPasswordResponse>('/auth/reset-password', payload)
+  const { data } = await apiClient.post<ResetPasswordResponse>('/auth/reset-password-confirm', payload)
+  return data
+}
+
+
+export interface VerifyMasterKeyResponse {
+  success: boolean
+  message: string
+}
+
+export async function verifyMasterKey(key: string, token: string): Promise<VerifyMasterKeyResponse> {
+  const { data } = await apiClient.post<VerifyMasterKeyResponse>(
+    '/auth/verify-master',
+    { key },
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
   return data
 }

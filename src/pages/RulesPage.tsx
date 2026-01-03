@@ -111,7 +111,7 @@ const RulesPage = () => {
             content thereof) without notice at any time.
           </p>
           <p>
-            NMAM Institute of Technology student organizers and college staff shall not be liable to you or to any
+            NMAM Institute of Technology student organisers and college staff shall not be liable to you or to any
             third-party for any modification, price change, suspension, or discontinuance of Incridea 2026.
           </p>
         </section>
@@ -128,7 +128,7 @@ const RulesPage = () => {
             details or images will be accurate.
           </p>
           <p>
-            NMAM Institute of Technology student organizers, college staff, and the principal reserve the right, but are
+            NMAM Institute of Technology student organisers, college staff, and the principal reserve the right, but are
             not obligated, to limit the attendance or participation of any person, from any geographic region or
             jurisdiction. We may exercise this right on a case-by-case basis. We reserve the right to limit the quantities
             of any events or services that we offer. All descriptions of events or services or their pricing are subject
@@ -260,7 +260,7 @@ const RulesPage = () => {
             2026 are prohibited from using the event or its content: (a) for any unlawful purpose; (b) to solicit others
             to perform or participate in any unlawful acts; (c) to violate any international, federal, provincial or
             state regulations, rules, laws, or local ordinances; (d) to infringe upon or violate the intellectual
-            property rights of the student organizers, college staff, or any other participants; (e) to harass, abuse,
+            property rights of the student organisers, college staff, or any other participants; (e) to harass, abuse,
             insult, harm, defame, slander, disparage, intimidate, or discriminate based on gender, sexual orientation,
             religion, ethnicity, race, age, national origin, or disability; (f) to submit false or misleading
             information; (g) to upload or transmit viruses or any other type of malicious code that will or may be used in
@@ -310,7 +310,7 @@ const RulesPage = () => {
         <section className="flex flex-col gap-3">
           <h2 className="text-2xl font-semibold text-sky-100">Section 14 - Indemnification</h2>
           <p>
-            You agree to indemnify, defend and hold harmless NMAM Institute of Technology and its organizers, staff,
+            You agree to indemnify, defend and hold harmless NMAM Institute of Technology and its organisers, staff,
             partners, officers, directors, agents, contractors, licensors, service providers, subcontractors, suppliers,
             interns, and employees, harmless from any claim or demand, including reasonable attorneys' fees, made by any
             third-party due to or arising out of your breach of these Terms of Service or the documents they incorporate
@@ -383,7 +383,7 @@ const RulesPage = () => {
         <section className="flex flex-col gap-3">
           <h2 className="text-2xl font-semibold text-sky-100">Section 20 - Contact Information</h2>
           <p>
-            Any questions about the Terms of Service should be directed to the student organizers and college staff at:
+            Any questions about the Terms of Service should be directed to the student organisers and college staff at:
           </p>
           <p>
             Email:

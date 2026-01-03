@@ -17,6 +17,8 @@ function Layout() {
   const [token, setToken] = useState<string | null>(null)
   const [userName, setUserName] = useState<string | null>(null)
   const [userRoles, setUserRoles] = useState<string[]>([])
+  const [isBranchRep, setIsBranchRep] = useState(false)
+  const [isOrganiser, setIsOrganiser] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -47,7 +49,7 @@ function Layout() {
         return
       }
       try {
-        const { data } = await apiClient.get<{ user?: { name?: unknown; email?: unknown; roles?: unknown } }>(
+        const { data } = await apiClient.get<{ user?: { name?: unknown; email?: unknown; roles?: unknown; isBranchRep?: unknown; isOrganiser?: unknown } }>(
           '/auth/me',
           {
             headers: { Authorization: `Bearer ${authToken}` },
@@ -63,6 +65,8 @@ function Layout() {
           : null
 
         const roles = user && typeof user === 'object' ? normalizeRoles((user as { roles?: unknown }).roles) : []
+        const branchRep = Boolean(user && (user as { isBranchRep?: unknown }).isBranchRep)
+        const organiser = Boolean(user && (user as { isOrganiser?: unknown }).isOrganiser)
 
         if (name) {
           localStorage.setItem('userName', name)
@@ -70,6 +74,8 @@ function Layout() {
         }
 
         setUserRoles(roles)
+        setIsBranchRep(branchRep)
+        setIsOrganiser(organiser)
         if (user && typeof user === 'object' && typeof (user as { email?: unknown }).email === 'string') {
           localStorage.setItem('userEmail', (user as { email: string }).email)
         }
@@ -81,6 +87,8 @@ function Layout() {
         setToken(null)
         setUserName(null)
         setUserRoles([])
+        setIsBranchRep(false)
+        setIsOrganiser(false)
       }
     }
 
@@ -88,7 +96,7 @@ function Layout() {
   }, [token])
 
   return (
-    <div className={`flex min-h-screen flex-col ${location.pathname.startsWith('/dashboard') ? 'bg-black' : 'bg-slate-950'} text-slate-50`}>
+    <div className={`flex min-h-screen flex-col ${location.pathname.startsWith('/dashboard') ? '' : 'bg-slate-950'} text-slate-50`}>
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
           <Link to="/" className="flex items-center gap-3 text-lg font-semibold text-sky-300">
@@ -114,7 +122,7 @@ function Layout() {
                   {link.label}
                 </NavLink>
               ))}
-            {hasRole(userRoles, 'ADMIN') ? (
+            {hasRole(userRoles, 'ADMIN') || hasRole(userRoles, 'DOCUMENTATION') || isBranchRep || isOrganiser ? (
               <NavLink
                 to="/dashboard"
                 className={({ isActive }) =>

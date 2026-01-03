@@ -8,7 +8,7 @@ function ContactPage() {
           <p className="text-sm uppercase tracking-[0.35em] text-slate-400">Reach Out</p>
           <h1 className="text-4xl font-semibold text-white md:text-6xl">Contact Us</h1>
           <p className="mx-auto max-w-3xl text-base text-slate-300 md:text-lg">
-            Any queries should be directed to the student organizers and college staff at the
+            Any queries should be directed to the student organisers and college staff at the
             following contact information.
           </p>
         </header>

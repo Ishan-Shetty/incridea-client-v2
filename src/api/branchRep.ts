@@ -10,7 +10,7 @@ export const EVENT_TYPES = [
 
 export type EventType = (typeof EVENT_TYPES)[number]
 
-export interface BranchRepOrganizer {
+export interface BranchRepOrganiser {
   userId: number
   name: string
   email: string
@@ -22,7 +22,16 @@ export interface BranchRepEvent {
   name: string
   eventType: EventType
   published: boolean
-  organizers: BranchRepOrganizer[]
+  organisers: BranchRepOrganiser[]
+  description: string | null
+  image: string | null
+  fees: number
+  venue: string | null
+  minTeamSize: number
+  maxTeamSize: number
+  maxTeams: number | null
+  category: EventCategory
+  tier: EventTier
 }
 
 export interface CreateBranchRepEventPayload {
@@ -52,7 +61,7 @@ export interface BranchRepEventDetails {
   category: EventCategory
   tier: EventTier
   published: boolean
-  organizers: BranchRepOrganizer[]
+  organisers: BranchRepOrganiser[]
 }
 
 export interface BranchRepUser {
@@ -86,18 +95,18 @@ export async function createBranchRepEvent(payload: CreateBranchRepEventPayload,
   return data
 }
 
-export async function addOrganizerToEvent(eventId: number, email: string, token: string) {
-  const { data } = await apiClient.post<{ organizer: BranchRepOrganizer }>(
-    `/branch-rep/events/${eventId}/organizers`,
+export async function addOrganiserToEvent(eventId: number, email: string, token: string) {
+  const { data } = await apiClient.post<{ organiser: BranchRepOrganiser }>(
+    `/branch-rep/events/${eventId}/organisers`,
     { email },
     authHeader(token),
   )
   return data
 }
 
-export async function removeOrganizerFromEvent(eventId: number, userId: number, token: string) {
+export async function removeOrganiserFromEvent(eventId: number, userId: number, token: string) {
   const { data } = await apiClient.delete<{ message: string }>(
-    `/branch-rep/events/${eventId}/organizers/${userId}`,
+    `/branch-rep/events/${eventId}/organisers/${userId}`,
     authHeader(token),
   )
   return data

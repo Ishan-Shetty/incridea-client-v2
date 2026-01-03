@@ -14,6 +14,7 @@ import {
   type PublishedEventsResponse,
 } from '../api/public'
 import { showToast } from '../utils/toast'
+import { formatDate } from '../utils/date'
 
 const CATEGORY_FILTERS: (PublicEventCategory | 'ALL')[] = [
   'ALL',
@@ -41,23 +42,6 @@ function isSameUtcDay(left: Date, right: Date) {
   )
 }
 
-function formatDate(value?: string | null) {
-  if (!value) {
-    return 'Date TBD'
-  }
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return 'Date TBD'
-  }
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'UTC',
-  }).format(parsed)
-}
 
 function formatTeamSize(min: number, max: number) {
   if (min === max) {
@@ -107,7 +91,7 @@ function EventCard({ event }: { event: PublicEvent }) {
           <img
             src={event.image}
             alt={event.name}
-            className="h-16 w-16 flex-shrink-0 rounded-lg object-cover"
+            className="h-16 w-16 shrink-0 rounded-lg object-cover"
           />
         ) : null}
       </div>

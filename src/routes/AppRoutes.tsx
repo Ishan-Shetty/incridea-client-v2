@@ -15,6 +15,9 @@ import EventDetailPage from '../pages/EventDetailPage.tsx'
 import CommitteePage from '../pages/CommitteePage.tsx'
 import PrivacyPage from '../pages/PrivacyPage.tsx'
 import RulesPage from '../pages/RulesPage.tsx'
+import QuizPage from '../pages/QuizPage.tsx'
+
+
 
 function AppRoutes() {
   return (
@@ -33,6 +36,8 @@ function AppRoutes() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/dashboard/organiser/events/:eventId" element={<DashboardPage />} />
+        <Route path="/quiz/:quizId" element={<QuizPage />} />
         <Route path="/committee" element={<CommitteePage />} />
       </Route>
       <Route path="*" element={<NotFoundPage />} />

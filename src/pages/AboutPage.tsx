@@ -128,7 +128,7 @@ function AboutPage() {
           </div>
 
           <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 shadow-inner shadow-slate-950/40">
-            <div className="aspect-[4/3] w-full">
+            <div className="aspect-4/3 w-full">
               <iframe
                 title="Incridea Moments"
                 src="https://player.vimeo.com/video/1055896700?h=4cfe9089f7&badge=0&autopause=0&player_id=0&app_id=58479"

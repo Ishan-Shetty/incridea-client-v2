@@ -34,7 +34,7 @@ function VariablesTab({
         {variables.map((variable) => (
           <div
             key={variable.key}
-            className="rounded-xl border border-slate-800 bg-black p-4"
+            className="rounded-xl border border-slate-800  p-4"
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 space-y-2">
@@ -65,7 +65,7 @@ function VariablesTab({
                       </button>
                       <button
                         type="button"
-                        className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:bg-black sm:flex-1"
+                        className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover: sm:flex-1"
                         onClick={() => {
                           setVariableDrafts({ ...variableDrafts, [variable.key]: variable.value })
                           setEditingKey(null)

@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../incridea-server-v2"
+		},
+		{
+			"path": "C:/Users/dnshi/Downloads/Softwares/incridea/incridea-client-main"
+		},
+		{
+			"path": "C:/Users/dnshi/Downloads/Softwares/incridea/incridea-server-main"
+		}
+	],
+	"settings": {
+		"prisma.pinToPrisma6": true
+	}
+}

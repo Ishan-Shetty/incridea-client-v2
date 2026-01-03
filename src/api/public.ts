@@ -42,14 +42,14 @@ export interface PublicEvent {
   rounds: PublicEventRound[]
 }
 
-export interface PublicEventOrganizer {
+export interface PublicEventOrganiser {
   name: string
   email?: string | null
   phoneNumber?: string | null
 }
 
 export interface PublicEventDetail extends PublicEvent {
-  organizers: PublicEventOrganizer[]
+  organisers: PublicEventOrganiser[]
 }
 
 export interface EventDayConfig {
